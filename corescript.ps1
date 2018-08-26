@@ -71,7 +71,7 @@ Class api_class {
     
     [string]invoke_api(){
         
-        $base_url = "https://$($this.ip_addr):9440/api/nutanix/v3/$($this.sub_url)"
+        $base_url = "https://$($this.ip_addr):9440/api/nutanix/v2.0/$($this.sub_url)"
 	
         $header = @{
             "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($this.username+":"+$this.password ))
@@ -416,255 +416,35 @@ function get_vm_details($api_cls_obj, $vm_uuid){
 
 # Get all unprotected VMs in cluster.
 
-function get_unprotected_vms($api_cls_obj, )
+function get_unprotected_vms($api_cls_obj){
+    $api_cls_obj.init_params("protection_domains/unprotected_vms/", "GET")
+    $response = $api_cls_obj.invoke_api()
+    $status_code = $api_cls_obj.status_code
+
+    return $status_code, $response
+
+}
+
+
+
 # Main
 function main($ip_addr, $username, $password){
 
-    $cluster_name = "cluster01"
-    $network_name = "subnet_vm_create"
-    $dhcp_ip = "192.168.1.3"
-    $network_address = "192.168.1.0"
-    $prefix_length = "24"
-    $project_name = "ntnx.vmcreateproject"
-    $vlan_id = "200"
-    $vm_name = "VM123"
-    $memory_in_mb = "1024"
-    $role_name = "vm_user"
-    $vcpu = "1"
-    $mac_address = "00:0a:f7:16:bb:9c"
     
     #initialize the classes
     $api_cls_obj = [api_class]::new($ip_addr, $username, $password)
     $status_lib_obj = [library_status_fns_api]::new() 
 
-    #Get the current logged in user's id
-    $status_code, $response = get_current_user -api_cls_obj $api_cls_obj
-    
+    #Get all unprotected VMs for cluster
+    $status_code, $response = get_unprotected_vms -api_cls_obj $api_cls_obj
+
     if($status_code -eq 200){
 
         $response = ConvertFrom-Json $response
-        $user_uuid = $response.metadata.uuid
-        write-host "Got the current logged in user uuid : $user_uuid"
-        if(-not $user_uuid){
-            Write-Host "No user logged in!!"   
-				$host.SetShouldExit(1)
-				exit
-        }
+        Write-Host "Unprotected VMs:" $response
 
-    } else {
-
-        try {
-            $response = ConvertFrom-Json $response
-            $status_lib_obj.print_failure_status($response) 
-            #return $false
-			$host.SetShouldExit(1)
-			exit
-        } catch {
-            Write-host "Failed to get user!! $status_code' - '$response'"
-            #return $_
-			$host.SetShouldExit(1)
-			exit
-        }
     }
 
-    #List all the roles and get the particular role's uuid
-
-    $status_code, $response = list_roles -api_cls_obj $api_cls_obj
-    
-    if($status_code -eq 200){
-
-        $response = ConvertFrom-Json $response
-        $role_names = $response.entities.status.name 
-        $role_uuids = $response.entities.metadata.uuid
-        
-        if ($role_uuids.count -gt 1) {
-
-            #Get uuid of particular role
-            $role_name =  $role_names[0]
-            $role_uuid =  $role_uuids[0]
-            Write-Host "Got the role uuid '$role_uuid' of role '$role_name'"
-            
-        } else {
-            $role_name =  $role_names
-            $role_uuid =  $role_uuids
-            Write-Host "Got the role uuid '$role_uuid' of role '$role_name'" 
-        }
-        If(-not $role_uuid) {
-            Write-Host "'$role_name' role doesn't exists!"
-          #  return
-		  $host.SetShouldExit(1)
-		  exit
-        }
-        
-    } else {
-        try {
-            $response = ConvertFrom-Json $response
-            $status_lib_obj.print_failure_status($response) 
-           # return $false
-		   $host.SetShouldExit(1)
-		   exit
-        } catch {
-            Write-host "Failed to get role!! $status_code' - '$response'"
-            #return $_
-			$host.SetShouldExit(1)
-			exit
-        }
-    }
-    
-    #List all the cluster
-
-    $status_code, $response = list_clusters -api_cls_obj $api_cls_obj   
-    if ($status_code -eq 200) {
-        $response = ConvertFrom-Json $response
-        $cluster_name = $response.entities.status.name[0] 
-        $cluster_uuid = $response.entities.metadata.uuid[0]
-         
-        Write-host "Cluster name '$cluster_name', its uuid '$cluster_uuid'"
-
-    } Else {
-       
-        try {
-            $response = ConvertFrom-Json $response
-            $status_lib_obj.print_failure_status($response) 
-            return
-        } catch {
-             Write-host "Failed to list cluster!! '$status_code' - '$response'"
-            return $_
-        }
-    } 
-        
-    #Create an unmanaged Network
-    $status_code, $response = create_unmanaged_network -api_cls_obj $api_cls_obj -network_name $network_name -vlan_id $vlan_id -cluster_uuid $cluster_uuid
-    
-    if ($status_code -eq 202){
-
-        $response = ConvertFrom-Json $response
-        $network_uuid = $response.metadata.uuid #get networks uuid
-        
-        $network_uuid = $status_lib_obj.track_api_status($status_code, $response, { get_network_details -api_cls_obj $api_cls_obj -network_uuid $network_uuid})
-        if ($network_uuid) {
-
-            Write-host "Created network '$network_name', it's uuid '$network_uuid'"
-
-        } Else {
- 
-            Write-host "Failed to create network!! $network_name" 
-            #return    
-			$host.SetShouldExit(1)
-			exit
-        }
-    } Else {
-        try {
-            $response = ConvertFrom-Json $response
-            $status_lib_obj.print_failure_status($response) 
-            #return
-			$host.SetShouldExit(1)
-			exit
-        } catch {
-            Write-host "Failed to create network!!  '$status_code' - '$response'"
-            #return $_
-			$host.SetShouldExit(1)
-			exit
-        }   
-    }
-
-    #Create a project with user uuid
-
-    if ($role_uuid -and $network_uuid -and $user_uuid){
-       
-       $status_code, $response = create_project_with_network -api_cls_obj $api_cls_obj -project_name $project_name -role_uuid $role_uuid -user_uuid $user_uuid -network_uuid $network_uuid 
-
-       if ($status_code){
-
-            $response = ConvertFrom-Json $response
-            $project_uuid = $response.metadata.uuid #get project uuid            
-        
-            $project_uuid = $status_lib_obj.track_api_status($status_code, $response, { get_project -api_cls_obj $api_cls_obj -project_uuid $project_uuid})
-            if ($project_uuid) {
-
-                Write-host "Created project '$project_name', it's uuid '$project_uuid'"
-
-            } Else {
-                Write-host "Failed to create project!! $project_name"     
-					$host.SetShouldExit(1)
-					exit
-            }
-        } Else {
-            try {
-                $response = ConvertFrom-Json $response
-                $status_lib_obj.print_failure_status($response) 
-            #    return $false
-				$host.SetShouldExit(1)
-				exit
-            } catch {
-                Write-host "Failed to create project!! $status_code' - '$response'"
-				#	return $_
-				$host.SetShouldExit(1)
-				exit
-            }
-        }
-    }
-
-    #Create VM
-    if($project_uuid -and $network_uuid){
-
-        $status_code, $response = create_vm -api_cls_obj $api_cls_obj -vm_name $vm_name -cluster_uuid $cluster_uuid -network_uuid $network_uuid -memory_in_mb $memory_in_mb -vcpu $vcpu # -project_name $project_name               
-        if ($status_code){
-
-            $response = ConvertFrom-Json $response
-            $vm_uuid = $response.metadata.uuid #get vm uuid        
-            $vm_uuid = $status_lib_obj.track_api_status($status_code, $response, { get_vm_details -api_cls_obj $api_cls_obj -vm_uuid $vm_uuid})
-            if ($vm_uuid) {
-
-                Write-host "Created VM '$vm_name', it's uuid '$vm_uuid'"
-
-            } Else {
-                Write-host "Failed to create VM!! $vm_name"  
-					$host.SetShouldExit(1)
-					exit
-            }
-        } Else {
-           try {
-                $response = ConvertFrom-Json $response
-                $status_lib_obj.print_failure_status($response) 
-                #return $false
-				$host.SetShouldExit(1)
-				exit
-            } catch {
-                Write-host "Failed to create vm!! $status_code' - '$response'"
-               # return $_
-			   $host.SetShouldExit(1)
-			   exit
-            }
-        }
-    
-    }
-
-    # Get the VM details
-    if ($vm_uuid){
-
-        $status_code, $response = get_vm_details -api_cls_obj $api_cls_obj -vm_uuid $vm_uuid
-        if ($status_code -eq 200) {
-            $response = ConvertFrom-Json $response
-
-            Write-Output "VM details:: $response $($response.status.name)"
-            
-        } Else {
-         
-            try {
-                $response = ConvertFrom-Json $response
-                $status_lib_obj.print_failure_status($response) 
-               # return $false
-			   $host.SetShouldExit(2)
-			   exit
-            } catch {
-                Write-host "Failed to get vm!! $status_code' - '$response'"
-             #   return $_
-			 $host.SetShouldExit(2)
-			 exit
-            }    
-        }
-    }
 }
 main -ip_addr $ip_addr -username $username -password $password
 
