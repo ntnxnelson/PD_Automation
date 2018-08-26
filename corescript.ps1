@@ -243,8 +243,10 @@ function main($ip_addr, $username, $password){
 
     if($status_code -eq 200){
 
-        $response = ConvertFrom-Json $response
-        Write-Host "Unprotected VMs:" $response
+        $unprotected_vms = $response | select -Property vm_name
+
+
+        Write-Host $unprotected_vms
 
     }
 
