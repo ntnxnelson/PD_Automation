@@ -14,82 +14,9 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
 
 [Net.ServicePointManager]::SecurityProtocol = 'TLS11','TLS12','ssl3'
 
-$username = "admin"
-$password = "Nutanix/4u!"
 
-$PDCounter = 0
-$PDContentsCounter = 0
+function Write-LogOutput{
 
-$PDListUrl = "https://10.1.174.199:9440/api/nutanix/v2.0/protection_domains/"
-$UnprotectedUrl = "https://10.1.174.199:9440/api/nutanix/v2.0/protection_domains/unprotected_vms/"
-$PDCreateUrl = "https://10.1.174.199:9440/PrismGateway/services/rest/v2.0/protection_domains/"
-
-
-$BasePDName = "NTNXPD"
-
-## Pull array of un-protected VMs
-
-$Unprotected = Invoke-PrismRESTCall -method GET -url $UnprotectedUrl -username $username -password $password
-$UnproList = $Unprotected.entities
-Write-Host "There are" $UnproList.Count "unprotected VMs on this cluster."
-echo ""
-
-Foreach ($upvm in $Unprotected.entities) {
-    $upvmname = $upvm.vm_name
-    $upvmuuid = $upvm.uuid
-    #Write-Host $upvmname $upvm.uuid
-    $data = @{ uuids = @("$upvmuuid")}
-    $upbodyjson = $data | ConvertTo-Json
-
-
-    ## Find out how many protection domains
-
-    $PDList = Invoke-PrismRESTCall -method GET -url $PDListUrl -username $username -password $password 
-    #Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved Protection Domain list"
-
-    $PDObject = $PDList.entities
-    #Write-Host "There are" $PDObject.count "Protection Domains on this cluster"
-
-    For ($i=0 ; $i -lt $PDObject.Count ; $i++) {
-        $PD = $PDObject[$i]
-        $PDName = $PD.name
-        $protectvm = "/protect_vms"
-        $PDContents = Invoke-PrismRESTCall -method GET -url $($PDListUrl + $PDName) -username $username -password $password
-        $PDVMs = $PDContents.vms | select -Property vm_name
-        If ($PDVMs.Count -lt 4) {
-            #Add vm to this PD
-            #Write-Host "We must add" $upvmname "to the Protection domain" $PDName
-            $ProtectURL = $($PDListURl + $PDName + $protectvm)
-            $VMProtect = Invoke-PrismRESTCall -method POST -url $($PDListURl + $PDName + $protectvm) -username $username -password $password -body $upbodyjson | Get-Member
-            
-        }
-        ElseIf ($i = $PDObject.Count) {
-            #If this is the last PD, create another one and then add VM to the new PD
-            #Write-Host "We must create a new PD for" $upvmname
-            $NewPDCounter = $i + 1
-            $NewPDName = $($BasePDName + $NewPDCounter)
-            $newpddata = @{ value = "$NewPDName"}
-            $newpdbodyjson = $newpddata | ConvertTo-Json
-            $PDCreation = Invoke-PrismRESTCall -method POST -url $PDCreateUrl -username $username -password $password -body $newpdbodyjson | Get-Member
-        }
-        Else {
-            #Move on
-            Write-Host "Loop"
-        }
-    }
-}
-
-
-
-#Write-Host "There are " $PDCounter " Protection Domains."
-
-## Find out how many VMs per protection domain
-
-
-
-
-function Write-LogOutput
-{
 <#
 .SYNOPSIS
 Outputs color coded messages to the screen and/or log file based on the category.
@@ -150,8 +77,8 @@ https://github.com/sbourdeaud
 #this function is used to connect to Prism REST API
 
 
-function Invoke-PrismRESTCall
-{
+function Invoke-PrismRESTCall{
+
 	#input: username, password, url, method, body
 	#output: REST response
 <#
@@ -279,3 +206,93 @@ function Invoke-PrismRESTCall
         return $myvarRESTOutput
     }
 }#end function Get-PrismRESTCall
+
+function Get-PrimePD {
+
+param
+	(
+		[string] 
+        $pdUrl,
+		
+        [string] 
+        $pdCreateUrl,
+        
+        [string] 
+        $baseName,
+        
+        [string] 
+        $protectSubUrl,
+        
+        [string]
+        $username,
+
+        [string]
+        $password
+	)
+
+process
+    {       
+    $PDList = Invoke-PrismRESTCall -method GET -url $pdUrl -username $username -password $password 
+    #Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved Protection Domain list"
+    $PDObject = $PDList.entities
+    #Write-Host "There are" $PDObject.count "Protection Domains on this cluster"
+    foreach ($p in $PDObject){
+        $hash.Add($p.name,$p.vms.Count)
+        }
+        $PrimePD = $hash.GetEnumerator() | sort value -Descending | select -Last 1
+        If ($PrimePD.Value -lt 5){
+            return $PrimePD.Name
+        }
+        Else {
+            #New PD needed
+            $newPDName = $($baseName + ($PDObject.Count + 1))
+            $newpddata = @{ value = "$NewPDName"}
+            $newpdbodyjson = $newpddata | ConvertTo-Json
+            $PDCreation = Invoke-PrismRESTCall -method POST -url $pdCreateUrl -username $username -password $password -body $newpdbodyjson
+            return $PDCreation.name
+        }
+    
+    }
+
+}#end function Get-PrimePD
+
+
+
+$hash = $null
+$hash = @{}
+
+$username = "admin"
+$password = "Nutanix/4u!"
+$clusterip = "10.1.174.199"
+
+$PDListUrl = "https://$($clusterip):9440/api/nutanix/v2.0/protection_domains/"
+$UnprotectedUrl = "https://$($clusterip):9440/api/nutanix/v2.0/protection_domains/unprotected_vms/"
+$PDCreateUrl = "https://$($clusterip):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+
+$BasePDName = "NTNXPD"
+
+## Pull array of un-protected VMs
+$Unprotected = Invoke-PrismRESTCall -method GET -url $UnprotectedUrl -username $username -password $password
+$UnproList = $Unprotected.entities
+Write-Host "There are" $UnproList.Count "unprotected VMs on this cluster."
+
+Foreach ($upvm in $Unprotected.entities) {
+    $upvmname = $upvm.vm_name
+    $upvmuuid = $upvm.uuid
+    Write-Host $upvmname $upvm.uuid
+    $data = @{ uuids = @("$upvmuuid")}
+    $upbodyjson = $data | ConvertTo-Json
+
+    $protectvm = "/protect_vms"
+
+    $PDName = Get-PrimePD -pdUrl $PDListUrl -pdCreateUrl $PDCreateUrl -baseName $BasePDName -protectSubUrl $protectvm -username $username -password $password
+    $hash = $null
+    $hash = @{} 
+
+    $ProtectURL = $($PDListURl + $PDName + $protectvm)
+    #$VMProtect = Invoke-PrismRESTCall -method POST -url $($PDListURl + $PDName + $protectvm) -username $username -password $password -body $upbodyjson
+
+
+
+}
+    
