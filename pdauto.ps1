@@ -262,8 +262,14 @@ $hash = $null
 $hash = @{}
 
 $username = "admin"
-$password = "Nutanix/4u!"
 $clusterip = "10.1.174.199"
+
+$PasswordFile = "C:\temp\Password.txt"
+$KeyFile = "C:\temp\AES.key"
+$key = Get-Content $KeyFile
+$MyCredential = New-Object -TypeName System.Management.Automation.PSCredential `
+ -ArgumentList $User, (Get-Content $PasswordFile | ConvertTo-SecureString -Key $key)
+$password = $MyCredential.GetNetworkCredential().Password
 
 $PDListUrl = "https://$($clusterip):9440/api/nutanix/v2.0/protection_domains/"
 $UnprotectedUrl = "https://$($clusterip):9440/api/nutanix/v2.0/protection_domains/unprotected_vms/"
